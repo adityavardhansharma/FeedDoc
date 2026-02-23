@@ -1,0 +1,10 @@
+Frontend Design Skill License Terms
+==================================
+
+Complete terms are to be provided by the skill author.
+
+Current placeholder:
+- This file exists to satisfy the SKILL.md frontmatter reference:
+  `license: Complete terms in LICENSE.txt`
+
+Replace this placeholder with your desired legal/license text.

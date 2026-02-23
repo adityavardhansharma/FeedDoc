@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "FeedDoc",
+  "version": "1.0.0",
+  "description": "Slice PDF, PPTX, and DOCX files and feed them directly into AI chat platforms.",
+  "permissions": ["sidePanel", "activeTab", "scripting", "tabs", "storage"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://grok.com/*",
+    "https://x.ai/*",
+    "https://t3.chat/*"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://grok.com/*",
+        "https://x.ai/*",
+        "https://t3.chat/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Open FeedDoc"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
