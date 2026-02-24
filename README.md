@@ -13,7 +13,7 @@ Upload a PDF, PowerPoint, or Word file, pick a page range, and FeedDoc creates a
 
 ## How to Install
 
-1. Download this repository (click the green **Code** button above, then **Download ZIP**, and unzip it)
+1. Download this repository
 2. Open Chrome and go to `chrome://extensions`
 3. Turn on **Developer mode** using the toggle in the top-right corner
 4. Click **Load unpacked**
