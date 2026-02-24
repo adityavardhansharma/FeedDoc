@@ -47,7 +47,7 @@ pnpm install
 pnpm build
 ```
 
-Then load the `dist/` folder as described above.
+Then load the `dist/` folder as described above in chrome.
 
 ## License
 
