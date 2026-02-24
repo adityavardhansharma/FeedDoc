@@ -3,7 +3,7 @@
   "name": "FeedDoc",
   "version": "1.0.0",
   "description": "Slice PDF, PPTX, and DOCX files and feed them directly into AI chat platforms.",
-  "permissions": ["sidePanel", "activeTab", "scripting", "tabs", "storage"],
+  "permissions": ["sidePanel", "activeTab", "tabs", "storage"],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://claude.ai/*",

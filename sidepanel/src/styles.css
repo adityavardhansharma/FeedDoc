@@ -77,16 +77,14 @@ body {
 }
 
 .fd__logo {
-  width: 22px;
-  height: 22px;
-  border: 1.5px solid var(--glow);
-  display: grid;
-  place-items: center;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
-  box-shadow: 0 0 8px rgba(0,255,159,0.2), inset 0 0 6px rgba(0,255,159,0.05);
+  box-shadow: 0 0 8px rgba(0,255,159,0.2);
+  overflow: hidden;
 }
 
-.fd__logo svg { width: 11px; height: 11px; color: var(--glow); }
+.fd__logo svg { width: 24px; height: 24px; display: block; }
 
 .fd__title {
   font-size: 13px;

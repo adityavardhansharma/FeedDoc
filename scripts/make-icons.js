@@ -17,9 +17,6 @@ function createPNG(size) {
     const typeBytes = new TextEncoder().encode(type);
     const len = new Uint8Array(4);
     new DataView(len.buffer).setUint32(0, data.length);
-    const combined = new Uint8Array(typeBytes.length + data.length);
-    combined.set(typeBytes);
-    combined.set(data, 4 - (4 - typeBytes.length));
     const forCrc = new Uint8Array(typeBytes.length + data.length);
     forCrc.set(typeBytes);
     forCrc.set(data, typeBytes.length);
@@ -34,43 +31,77 @@ function createPNG(size) {
     return result;
   }
 
+  const bg = [2, 2, 4, 255];
+  const green = [0, 255, 159, 255];
   const raw = new Uint8Array(size * (size * 4 + 1));
-  const purple = [124, 58, 237, 255];
-  const white = [255, 255, 255, 230];
-  const darkPurple = [124, 58, 237, 255];
-  const r = size * 0.2;
 
-  function inRoundRect(x, y, w, h, rad) {
-    if (x >= rad && x < w - rad && y >= 0 && y < h) return true;
-    if (y >= rad && y < h - rad && x >= 0 && x < w) return true;
-    const corners = [[rad, rad], [w - rad, rad], [rad, h - rad], [w - rad, h - rad]];
-    for (const [cx, cy] of corners) {
-      const dx = x - cx, dy = y - cy;
-      if (dx * dx + dy * dy <= rad * rad) return true;
-    }
-    return false;
-  }
+  const borderW = Math.max(1, Math.round(size / 32));
+
+  // Bitmap for "FD" glyphs on a 7-column x 9-row grid per character
+  // F glyph (7 wide)
+  const F = [
+    [1,1,1,1,1,1,0],
+    [1,1,1,1,1,1,0],
+    [1,1,0,0,0,0,0],
+    [1,1,1,1,1,0,0],
+    [1,1,1,1,1,0,0],
+    [1,1,0,0,0,0,0],
+    [1,1,0,0,0,0,0],
+    [1,1,0,0,0,0,0],
+    [1,1,0,0,0,0,0],
+  ];
+  // D glyph (7 wide)
+  const D = [
+    [1,1,1,1,1,0,0],
+    [1,1,1,1,1,1,0],
+    [1,1,0,0,0,1,1],
+    [1,1,0,0,0,1,1],
+    [1,1,0,0,0,1,1],
+    [1,1,0,0,0,1,1],
+    [1,1,0,0,0,1,1],
+    [1,1,1,1,1,1,0],
+    [1,1,1,1,1,0,0],
+  ];
+
+  const glyphH = 9;
+  const glyphW = 7;
+  const gap = 1;
+  const totalGlyphW = glyphW * 2 + gap;
+
+  const pixelSize = Math.max(1, Math.floor(size * 0.055));
+  const textW = totalGlyphW * pixelSize;
+  const textH = glyphH * pixelSize;
+  const startX = Math.floor((size - textW) / 2);
+  const startY = Math.floor((size - textH) / 2) + Math.round(size * 0.02);
 
   for (let y = 0; y < size; y++) {
     const rowStart = y * (size * 4 + 1);
     raw[rowStart] = 0;
     for (let x = 0; x < size; x++) {
       const offset = rowStart + 1 + x * 4;
-      if (inRoundRect(x, y, size, size, r)) {
-        const s = size / 16;
-        const dx = x / s, dy = y / s;
-        const inDoc = dx >= 4 && dx <= 12 && dy >= 2 && dy <= 14;
-        const isLine1 = dy >= 8.5 && dy <= 9.5 && dx >= 6 && dx <= 10;
-        const isLine2 = dy >= 10.5 && dy <= 11.5 && dx >= 6 && dx <= 8;
-        if (isLine1 || isLine2) {
-          raw.set(darkPurple, offset);
-        } else if (inDoc) {
-          raw.set(white, offset);
-        } else {
-          raw.set(purple, offset);
+
+      const isBorderX = x < borderW || x >= size - borderW;
+      const isBorderY = y < borderW || y >= size - borderW;
+
+      if (isBorderX || isBorderY) {
+        raw.set(green, offset);
+        continue;
+      }
+
+      const gx = x - startX;
+      const gy = y - startY;
+      if (gx >= 0 && gx < textW && gy >= 0 && gy < textH) {
+        const col = Math.floor(gx / pixelSize);
+        const row = Math.floor(gy / pixelSize);
+        let hit = false;
+        if (col < glyphW && row < glyphH) {
+          hit = F[row][col] === 1;
+        } else if (col >= glyphW + gap && col < totalGlyphW && row < glyphH) {
+          hit = D[row][col - glyphW - gap] === 1;
         }
+        raw.set(hit ? green : bg, offset);
       } else {
-        raw.set([0, 0, 0, 0], offset);
+        raw.set(bg, offset);
       }
     }
   }
@@ -120,9 +151,8 @@ function createPNG(size) {
   const ihdrView = new DataView(ihdr.buffer);
   ihdrView.setUint32(0, size);
   ihdrView.setUint32(4, size);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // RGBA
-  ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  ihdr[8] = 8;
+  ihdr[9] = 6;
 
   const sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdrChunk = chunk('IHDR', ihdr);
@@ -142,4 +172,4 @@ function createPNG(size) {
 writeFileSync('icons/icon16.png', createPNG(16));
 writeFileSync('icons/icon48.png', createPNG(48));
 writeFileSync('icons/icon128.png', createPNG(128));
-console.log('Icons generated.');
+console.log('FD icons generated: 16, 48, 128');
