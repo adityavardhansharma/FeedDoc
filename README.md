@@ -4,6 +4,9 @@ A Chrome extension that lets you slice pages from documents and feed them direct
 
 Upload a PDF, PowerPoint, or Word file, pick a page range, and FeedDoc creates a new file with just those pages. Then feed it straight into ChatGPT, Claude, Grok, or T3 Chat — no copy-pasting, no manual uploads. Everything happens locally in your browser.
 
+
+https://github.com/user-attachments/assets/6e79e026-009b-42d1-8a83-c9c67bcff000
+
 ## Supported AI Platforms
 
 - ChatGPT
