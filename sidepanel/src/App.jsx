@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { detectPlatform, getFileType, getFileExtension, MAX_FILE_SIZE, LARGE_FILE_THRESHOLD, IPC_SIZE_LIMIT } from './utils/platformConfig';
 import FileUploader from './components/FileUploader';
-import RangePicker from './components/RangePicker';
-import SlicedFilePreview from './components/SlicedFilePreview';
+import SegmentPicker from './components/SegmentPicker';
+import SegmentList from './components/SegmentList';
 
 const STEPS = { UPLOAD: 0, RANGE: 1, SLICING: 2, RESULT: 3 };
 
@@ -12,18 +12,19 @@ function fmtSize(b) {
   return (b / 1048576).toFixed(1) + ' MB';
 }
 
+let segIdCounter = 0;
+const createSegment = (from, to) => ({ id: ++segIdCounter, from, to, status: 'pending', data: null, name: '' });
+
 export default function App() {
   const [platform, setPlatform] = useState(null);
   const [file, setFile] = useState(null);
   const [fileInfo, setFileInfo] = useState(null);
-  const [fromPage, setFromPage] = useState(1);
-  const [toPage, setToPage] = useState(1);
+  const [segments, setSegments] = useState([]);
   const [step, setStep] = useState(STEPS.UPLOAD);
-  const [slicedData, setSlicedData] = useState(null);
-  const [slicedName, setSlicedName] = useState('');
   const [error, setError] = useState('');
-  const [attachStatus, setAttachStatus] = useState('idle');
+  const [isFeedingAll, setIsFeedingAll] = useState(false);
   const [warnLarge, setWarnLarge] = useState(false);
+  const feedAbortRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -39,8 +40,7 @@ export default function App() {
 
   const handleFile = useCallback(async (f) => {
     setError('');
-    setSlicedData(null);
-    setAttachStatus('idle');
+    setSegments([]);
     if (f.size > MAX_FILE_SIZE) { setError('File exceeds 512 MB limit.'); return; }
     setWarnLarge(f.size > LARGE_FILE_THRESHOLD);
     const ft = getFileType(f.name);
@@ -65,66 +65,158 @@ export default function App() {
       }
     } catch { setError('Could not read file. It may be corrupted or protected.'); setFile(null); return; }
     setFileInfo({ name: f.name, size: f.size, type: ft, totalPages: pages, isEstimate: ft.ext === 'docx' });
-    setFromPage(1);
-    setToPage(pages);
+    setSegments([createSegment(1, pages)]);
     setStep(STEPS.RANGE);
   }, []);
 
+  // Segment management
+  const handleAddSegment = useCallback(() => {
+    if (!fileInfo) return;
+    setSegments(prev => [...prev, createSegment(1, fileInfo.totalPages)]);
+  }, [fileInfo]);
+
+  const handleRemoveSegment = useCallback((id) => {
+    setSegments(prev => prev.filter(s => s.id !== id));
+  }, []);
+
+  const handleUpdateSegment = useCallback((id, updates) => {
+    setSegments(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+  }, []);
+
   const handleSlice = useCallback(async () => {
-    if (!file || !fileInfo) return;
+    if (!file || !fileInfo || segments.length === 0) return;
     setStep(STEPS.SLICING);
     setError('');
     try {
       const buf = await file.arrayBuffer();
-      let result;
-      if (fileInfo.type.ext === 'pdf') { result = await (await import('./slicers/pdfSlicer')).slicePdf(buf, fromPage, toPage); }
-      else if (fileInfo.type.ext === 'pptx') { result = await (await import('./slicers/pptxSlicer')).slicePptx(buf, fromPage, toPage); }
-      else { result = await (await import('./slicers/docxSlicer')).sliceDocx(buf, fromPage, toPage); }
       const base = file.name.replace(/\.[^.]+$/, '');
       const ext = getFileExtension(file.name);
       const lbl = fileInfo.type.ext === 'pptx' ? 's' : 'p';
-      setSlicedData(result);
-      setSlicedName(`${base}_${lbl}${fromPage}-${lbl}${toPage}.${ext}`);
+
+      // Import the slicer once
+      let slicer;
+      if (fileInfo.type.ext === 'pdf') slicer = (await import('./slicers/pdfSlicer')).slicePdf;
+      else if (fileInfo.type.ext === 'pptx') slicer = (await import('./slicers/pptxSlicer')).slicePptx;
+      else slicer = (await import('./slicers/docxSlicer')).sliceDocx;
+
+      // Slice all segments in parallel
+      const results = await Promise.all(
+        segments.map(async (seg) => {
+          const data = await slicer(buf, seg.from, seg.to);
+          const name = `${base}_${lbl}${seg.from}-${lbl}${seg.to}.${ext}`;
+          return { id: seg.id, data, name };
+        })
+      );
+
+      // Update segments with sliced data
+      setSegments(prev => prev.map(seg => {
+        const result = results.find(r => r.id === seg.id);
+        return result ? { ...seg, data: result.data, name: result.name, status: 'sliced' } : seg;
+      }));
       setStep(STEPS.RESULT);
     } catch { setError('Slicing failed. The file may be corrupted.'); setStep(STEPS.RANGE); }
-  }, [file, fileInfo, fromPage, toPage]);
+  }, [file, fileInfo, segments]);
 
-  const handleDownload = useCallback(() => {
-    if (!slicedData) return;
+  const handleDownloadOne = useCallback((id) => {
+    const seg = segments.find(s => s.id === id);
+    if (!seg?.data || !fileInfo) return;
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([slicedData], { type: fileInfo.type.mime }));
-    a.download = slicedName;
+    a.href = URL.createObjectURL(new Blob([seg.data], { type: fileInfo.type.mime }));
+    a.download = seg.name;
     a.click();
     URL.revokeObjectURL(a.href);
-  }, [slicedData, slicedName, fileInfo]);
+  }, [segments, fileInfo]);
 
-  const handleAttach = useCallback(async () => {
-    if (!slicedData || !platform) return;
-    setAttachStatus('loading');
-    setError('');
+  const handleDownloadAll = useCallback(() => {
+    segments.forEach(seg => {
+      if (seg.data) handleDownloadOne(seg.id);
+    });
+  }, [segments, handleDownloadOne]);
+
+  const feedSegment = useCallback(async (seg) => {
+    if (!seg.data || !fileInfo) return false;
     try {
-      const arr = Array.from(slicedData);
+      const arr = Array.from(seg.data);
       let res;
       if (arr.length > IPC_SIZE_LIMIT) {
-        let bin = ''; for (let i = 0; i < slicedData.length; i++) bin += String.fromCharCode(slicedData[i]);
-        await chrome.storage.session.set({ pendingFile: { base64: btoa(bin), fileName: slicedName, mimeType: fileInfo.type.mime } });
+        let bin = ''; for (let i = 0; i < seg.data.length; i++) bin += String.fromCharCode(seg.data[i]);
+        await chrome.storage.session.set({ pendingFile: { base64: btoa(bin), fileName: seg.name, mimeType: fileInfo.type.mime } });
         res = await chrome.runtime.sendMessage({ type: 'ATTACH_FROM_STORAGE' });
       } else {
-        res = await chrome.runtime.sendMessage({ type: 'ATTACH_FILE', fileName: slicedName, mimeType: fileInfo.type.mime, fileData: arr });
+        res = await chrome.runtime.sendMessage({ type: 'ATTACH_FILE', fileName: seg.name, mimeType: fileInfo.type.mime, fileData: arr });
       }
-      if (res?.success) { setAttachStatus('success'); setTimeout(() => setAttachStatus('idle'), 3000); }
-      else { setAttachStatus('idle'); setError(res?.error || 'Auto-attach failed. Use Download instead.'); }
-    } catch { setAttachStatus('idle'); setError('Auto-attach failed. Use Download instead.'); }
-  }, [slicedData, slicedName, fileInfo, platform]);
+      return res?.success || false;
+    } catch { return false; }
+  }, [fileInfo]);
 
-  const reset = useCallback(() => {
-    setFile(null); setFileInfo(null); setSlicedData(null); setSlicedName('');
-    setError(''); setAttachStatus('idle'); setWarnLarge(false); setStep(STEPS.UPLOAD);
+  const handleFeedOne = useCallback(async (id) => {
+    if (!platform) return;
+    const seg = segments.find(s => s.id === id);
+    if (!seg?.data) return;
+
+    setSegments(prev => prev.map(s => s.id === id ? { ...s, status: 'feeding' } : s));
+    setError('');
+
+    const success = await feedSegment(seg);
+    setSegments(prev => prev.map(s => s.id === id ? { ...s, status: success ? 'fed' : 'error' } : s));
+    if (!success) setError('Feed failed. Try Download instead.');
+  }, [platform, segments, feedSegment]);
+
+  const handleFeedAll = useCallback(async () => {
+    if (!platform) return;
+    feedAbortRef.current = false;
+    setIsFeedingAll(true);
+    setError('');
+
+    // Get segments that need feeding (sliced or error, not already fed)
+    const toFeed = segments.filter(s => s.status === 'sliced' || s.status === 'error');
+
+    for (const seg of toFeed) {
+      if (feedAbortRef.current) break;
+
+      setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, status: 'feeding' } : s));
+
+      const success = await feedSegment(seg);
+      setSegments(prev => prev.map(s => s.id === seg.id ? { ...s, status: success ? 'fed' : 'error' } : s));
+
+      if (!success) {
+        setError(`Feed failed for segment ${segments.findIndex(s => s.id === seg.id) + 1}. Stopped.`);
+        break;
+      }
+
+      // Small delay between feeds to let the chat UI settle
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    setIsFeedingAll(false);
+  }, [platform, segments, feedSegment]);
+
+  const handleEdit = useCallback(() => {
+    feedAbortRef.current = true;
+    setIsFeedingAll(false);
+    // Reset segment statuses but preserve ranges
+    setSegments(prev => prev.map(s => ({ ...s, status: 'pending', data: null, name: '' })));
+    setStep(STEPS.RANGE);
   }, []);
 
-  const valid = fromPage >= 1 && toPage >= fromPage && (!fileInfo || toPage <= fileInfo.totalPages);
-  const count = valid ? toPage - fromPage + 1 : 0;
+  const reset = useCallback(() => {
+    feedAbortRef.current = true;
+    setFile(null); setFileInfo(null); setSegments([]);
+    setError(''); setIsFeedingAll(false); setWarnLarge(false); setStep(STEPS.UPLOAD);
+  }, []);
+
   const noun = fileInfo?.type.ext === 'pptx' ? 'slide' : 'page';
+
+  // Validation: all segments valid and no overlaps
+  const isSegmentValid = (seg, idx) => {
+    if (seg.from < 1 || seg.to > (fileInfo?.totalPages || 0) || seg.from > seg.to) return false;
+    for (let i = 0; i < segments.length; i++) {
+      if (i !== idx && !(seg.to < segments[i].from || seg.from > segments[i].to)) return false;
+    }
+    return true;
+  };
+  const allValid = segments.length > 0 && segments.every((s, i) => isSegmentValid(s, i));
+  const totalCount = segments.reduce((sum, s) => sum + Math.max(0, s.to - s.from + 1), 0);
 
   return (
     <div className="fd">
@@ -183,13 +275,18 @@ export default function App() {
         )}
 
         {step === STEPS.RANGE && fileInfo && (
-          <RangePicker from={fromPage} to={toPage} totalPages={fileInfo.totalPages}
+          <SegmentPicker
+            segments={segments}
+            totalPages={fileInfo.totalPages}
             pageLabel={fileInfo.type.ext === 'pptx' ? 'Slide' : 'Page'}
-            onFromChange={setFromPage} onToChange={setToPage} />
+            onUpdate={handleUpdateSegment}
+            onAdd={handleAddSegment}
+            onRemove={handleRemoveSegment}
+          />
         )}
 
         {step === STEPS.RANGE && (
-          <button className="bt bt--prime bt--w" disabled={!valid} onClick={handleSlice}>
+          <button className="bt bt--prime bt--w" disabled={!allValid} onClick={handleSlice}>
             <span className="bt__ic">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
@@ -197,7 +294,7 @@ export default function App() {
                 <line x1="8.12" y1="8.12" x2="12" y2="12" />
               </svg>
             </span>
-            Slice {count} {noun}{count !== 1 ? 's' : ''}
+            Slice {segments.length} segment{segments.length !== 1 ? 's' : ''} ({totalCount} {noun}{totalCount !== 1 ? 's' : ''})
           </button>
         )}
 
@@ -208,17 +305,19 @@ export default function App() {
           </div>
         )}
 
-        {step === STEPS.RESULT && slicedData && (
-          <SlicedFilePreview
-            originalName={fileInfo.name} slicedName={slicedName}
-            slicedSize={slicedData.byteLength} pageCount={count} pageLabel={noun}
-            onDownload={handleDownload} platform={platform}
-            onAttach={handleAttach} attachStatus={attachStatus} onReset={reset}
+        {step === STEPS.RESULT && segments.length > 0 && (
+          <SegmentList
+            segments={segments}
+            pageLabel={noun}
+            platform={platform}
+            isFeedingAll={isFeedingAll}
+            onFeedOne={handleFeedOne}
+            onFeedAll={handleFeedAll}
+            onDownloadOne={handleDownloadOne}
+            onDownloadAll={handleDownloadAll}
+            onEdit={handleEdit}
+            onReset={reset}
           />
-        )}
-
-        {!platform && step === STEPS.RESULT && (
-          <div className="noai">Navigate to a supported AI chat to feed files directly.</div>
         )}
       </div>
     </div>
