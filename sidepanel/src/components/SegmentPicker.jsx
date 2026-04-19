@@ -1,8 +1,11 @@
 import React from 'react';
 
-export default function SegmentPicker({ segments, totalPages, pageLabel, onUpdate, onAdd, onRemove }) {
+export default function SegmentPicker({ segments, totalPages, pageLabel, fileName, onUpdate, onAdd, onRemove }) {
   const canAdd = segments.length < 10;
   const canRemove = segments.length > 1;
+  const lbl = pageLabel === 'Slide' ? 's' : 'p';
+  const ext = fileName?.split('.').pop() || 'pdf';
+  const base = fileName?.replace(/\.[^.]+$/, '') || 'file';
 
   const validateSegment = (seg, idx) => {
     const errors = [];
@@ -21,6 +24,8 @@ export default function SegmentPicker({ segments, totalPages, pageLabel, onUpdat
     }
     return errors;
   };
+
+  const getPlaceholder = (seg) => `${base}_${lbl}${seg.from}-${lbl}${seg.to}.${ext}`;
 
   return (
     <div className="sp-wrap">
@@ -62,6 +67,17 @@ export default function SegmentPicker({ segments, totalPages, pageLabel, onUpdat
                   aria-label={`To ${pageLabel.toLowerCase()}`}
                 />
               </div>
+            </div>
+            <div className="seg__name-row">
+              <label className="seg__lbl">Name</label>
+              <input
+                className="seg__name-in"
+                type="text"
+                value={seg.customName || ''}
+                onChange={(e) => onUpdate(seg.id, { customName: e.target.value })}
+                placeholder={getPlaceholder(seg)}
+                aria-label="Segment name"
+              />
             </div>
             {errors.length > 0 ? (
               <div className="seg__err">{errors[0]}</div>

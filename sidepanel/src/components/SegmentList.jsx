@@ -1,10 +1,24 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 function fmt(b) {
   if (b < 1024) return b + ' B';
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
   return (b / 1048576).toFixed(1) + ' MB';
 }
+
+const CLOUD_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z" />
+    <path d="M12 13v5m0 0l2-2m-2 2l-2-2" />
+  </svg>
+);
+
+const CLOUD_CHECK_ICON = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z" />
+    <polyline points="9 15 11 17 15 13" />
+  </svg>
+);
 
 const STATUS_ICONS = {
   pending: (
@@ -36,11 +50,25 @@ const STATUS_ICONS = {
 export default function SegmentList({
   segments, pageLabel, platform, isFeedingAll,
   onFeedOne, onFeedAll, onDownloadOne, onDownloadAll, onEdit, onReset,
+  storageEnabled, onSaveOne,
 }) {
+  const [savingIds, setSavingIds] = useState(new Set());
+  const [savedIds, setSavedIds] = useState(new Set());
+
   const allFed = segments.every(s => s.status === 'fed');
   const anyPending = segments.some(s => s.status === 'sliced' || s.status === 'error');
   const totalPages = segments.reduce((sum, s) => sum + (s.to - s.from + 1), 0);
   const totalSize = segments.reduce((sum, s) => sum + (s.data?.byteLength || 0), 0);
+
+  const handleSave = async (seg) => {
+    if (!onSaveOne) return;
+    setSavingIds(prev => new Set(prev).add(seg.id));
+    const success = await onSaveOne(seg);
+    setSavingIds(prev => { const n = new Set(prev); n.delete(seg.id); return n; });
+    if (success) {
+      setSavedIds(prev => new Set(prev).add(seg.id));
+    }
+  };
 
   return (
     <div className="sl">
@@ -107,6 +135,22 @@ export default function SegmentList({
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M12 4v12m0 0l4-4m-4 4l-4-4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                     </svg>
+                  </button>
+                )}
+                {storageEnabled && seg.data && (
+                  <button
+                    className={`sl__btn${savedIds.has(seg.id) ? ' sl__btn--saved' : ''}`}
+                    onClick={() => handleSave(seg)}
+                    disabled={savingIds.has(seg.id) || savedIds.has(seg.id)}
+                    title={savedIds.has(seg.id) ? 'Saved' : 'Save to cloud'}
+                  >
+                    {savingIds.has(seg.id) ? (
+                      <div className="sp sp--sm" />
+                    ) : savedIds.has(seg.id) ? (
+                      CLOUD_CHECK_ICON
+                    ) : (
+                      CLOUD_ICON
+                    )}
                   </button>
                 )}
               </div>

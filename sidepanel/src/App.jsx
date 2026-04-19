@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { detectPlatform, getFileType, getFileExtension, MAX_FILE_SIZE, LARGE_FILE_THRESHOLD, IPC_SIZE_LIMIT } from './utils/platformConfig';
+import { getSettings, clearExpiredFiles, addFile } from './utils/storage';
+import { uploadFile, deleteFiles } from './utils/supabase';
 import FileUploader from './components/FileUploader';
 import SegmentPicker from './components/SegmentPicker';
 import SegmentList from './components/SegmentList';
+import Settings from './components/Settings';
+import Library from './components/Library';
 
 const STEPS = { UPLOAD: 0, RANGE: 1, SLICING: 2, RESULT: 3 };
+const VIEWS = { UPLOAD: 'upload', LIBRARY: 'library' };
 
 function fmtSize(b) {
   if (b < 1024) return b + ' B';
@@ -13,7 +18,7 @@ function fmtSize(b) {
 }
 
 let segIdCounter = 0;
-const createSegment = (from, to) => ({ id: ++segIdCounter, from, to, status: 'pending', data: null, name: '' });
+const createSegment = (from, to) => ({ id: ++segIdCounter, from, to, status: 'pending', data: null, name: '', customName: '' });
 
 export default function App() {
   const [platform, setPlatform] = useState(null);
@@ -25,6 +30,26 @@ export default function App() {
   const [isFeedingAll, setIsFeedingAll] = useState(false);
   const [warnLarge, setWarnLarge] = useState(false);
   const feedAbortRef = useRef(false);
+
+  // Storage feature state
+  const [settings, setSettings] = useState(null);
+  const [view, setView] = useState(VIEWS.UPLOAD);
+  const [showSettings, setShowSettings] = useState(false);
+  const [libKey, setLibKey] = useState(0); // To force library refresh
+
+  // Initialize settings and cleanup expired files
+  useEffect(() => {
+    (async () => {
+      const s = await getSettings();
+      setSettings(s);
+      if (s.storageEnabled && s.supabaseUrl && s.supabaseKey && s.supabaseBucket) {
+        const expired = await clearExpiredFiles();
+        if (expired.length > 0) {
+          await deleteFiles(s.supabaseUrl, s.supabaseKey, s.supabaseBucket, expired.map(f => f.key));
+        }
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -103,19 +128,70 @@ export default function App() {
       const results = await Promise.all(
         segments.map(async (seg) => {
           const data = await slicer(buf, seg.from, seg.to);
-          const name = `${base}_${lbl}${seg.from}-${lbl}${seg.to}.${ext}`;
+          // Use custom name if provided, otherwise generate default
+          const defaultName = `${base}_${lbl}${seg.from}-${lbl}${seg.to}.${ext}`;
+          const name = seg.customName?.trim() || defaultName;
           return { id: seg.id, data, name };
         })
       );
 
       // Update segments with sliced data
-      setSegments(prev => prev.map(seg => {
+      const updatedSegments = segments.map(seg => {
         const result = results.find(r => r.id === seg.id);
         return result ? { ...seg, data: result.data, name: result.name, status: 'sliced' } : seg;
-      }));
+      });
+      setSegments(updatedSegments);
       setStep(STEPS.RESULT);
+
+      // Auto-save if enabled
+      const canSave = settings?.storageEnabled && settings?.autoSave &&
+                      settings?.supabaseUrl && settings?.supabaseKey && settings?.supabaseBucket;
+      if (canSave) {
+        // Save segments
+        for (const seg of updatedSegments) {
+          if (seg.data) {
+            await uploadFile(settings.supabaseUrl, settings.supabaseKey, settings.supabaseBucket,
+                           seg.data, seg.name, fileInfo.type.mime).then(async (result) => {
+              await addFile({
+                key: result.key,
+                url: result.url,
+                name: seg.name,
+                size: seg.data.byteLength,
+                mimeType: fileInfo.type.mime,
+                fileType: fileInfo.type.ext,
+                typeColor: fileInfo.type.color,
+                isSegment: true,
+                pageRange: `${lbl === 's' ? 'slide' : 'page'}s ${seg.from}-${seg.to}`,
+                uploadedAt: Date.now(),
+                isPermanent: settings.defaultPermanent || false,
+              });
+            }).catch(() => {});
+          }
+        }
+        // Save original if enabled
+        if (settings.autoSaveOriginal) {
+          const buf = await file.arrayBuffer();
+          await uploadFile(settings.supabaseUrl, settings.supabaseKey, settings.supabaseBucket,
+                         new Uint8Array(buf), file.name, fileInfo.type.mime).then(async (result) => {
+            await addFile({
+              key: result.key,
+              url: result.url,
+              name: file.name,
+              size: file.size,
+              mimeType: fileInfo.type.mime,
+              fileType: fileInfo.type.ext,
+              typeColor: fileInfo.type.color,
+              isSegment: false,
+              pageRange: null,
+              uploadedAt: Date.now(),
+              isPermanent: settings.defaultPermanent || false,
+            });
+          }).catch(() => {});
+        }
+        setLibKey(k => k + 1);
+      }
     } catch { setError('Slicing failed. The file may be corrupted.'); setStep(STEPS.RANGE); }
-  }, [file, fileInfo, segments]);
+  }, [file, fileInfo, segments, settings]);
 
   const handleDownloadOne = useCallback((id) => {
     const seg = segments.find(s => s.id === id);
@@ -126,6 +202,109 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(a.href);
   }, [segments, fileInfo]);
+
+  // Save segment to cloud storage
+  const handleSaveOne = useCallback(async (seg) => {
+    if (!settings?.supabaseUrl || !settings?.supabaseKey || !settings?.supabaseBucket || !fileInfo) return false;
+    try {
+      const pageLabel = fileInfo.type.ext === 'pptx' ? 'slide' : 'page';
+      const result = await uploadFile(
+        settings.supabaseUrl,
+        settings.supabaseKey,
+        settings.supabaseBucket,
+        seg.data,
+        seg.name,
+        fileInfo.type.mime
+      );
+      await addFile({
+        key: result.key,
+        url: result.url,
+        name: seg.name,
+        size: seg.data.byteLength,
+        mimeType: fileInfo.type.mime,
+        fileType: fileInfo.type.ext,
+        typeColor: fileInfo.type.color,
+        isSegment: true,
+        pageRange: `${pageLabel}s ${seg.from}-${seg.to}`,
+        uploadedAt: Date.now(),
+        isPermanent: settings.defaultPermanent || false,
+      });
+      setLibKey(k => k + 1); // Refresh library if open
+      return true;
+    } catch (err) {
+      console.error('Save failed:', err);
+      return false;
+    }
+  }, [settings, fileInfo]);
+
+  // Save original file to cloud
+  const handleSaveOriginal = useCallback(async () => {
+    if (!settings?.supabaseUrl || !settings?.supabaseKey || !settings?.supabaseBucket || !file || !fileInfo) return false;
+    try {
+      const buf = await file.arrayBuffer();
+      const result = await uploadFile(
+        settings.supabaseUrl,
+        settings.supabaseKey,
+        settings.supabaseBucket,
+        new Uint8Array(buf),
+        file.name,
+        fileInfo.type.mime
+      );
+      await addFile({
+        key: result.key,
+        url: result.url,
+        name: file.name,
+        size: file.size,
+        mimeType: fileInfo.type.mime,
+        fileType: fileInfo.type.ext,
+        typeColor: fileInfo.type.color,
+        isSegment: false,
+        pageRange: null,
+        uploadedAt: Date.now(),
+        isPermanent: settings.defaultPermanent || false,
+      });
+      setLibKey(k => k + 1);
+      return true;
+    } catch (err) {
+      console.error('Save original failed:', err);
+      return false;
+    }
+  }, [settings, file, fileInfo]);
+
+  // Load file from library
+  const handleLoadFromLibrary = useCallback(async (loadedFile) => {
+    // If it's a segment, feed it directly
+    if (loadedFile.isSegment) {
+      // Create a virtual segment for feeding
+      const virtualSeg = {
+        id: -1,
+        data: loadedFile.data,
+        name: loadedFile.name,
+        status: 'sliced',
+      };
+      // Use the feed logic directly
+      if (!platform) return;
+      try {
+        const arr = Array.from(loadedFile.data);
+        let res;
+        if (arr.length > IPC_SIZE_LIMIT) {
+          let bin = ''; for (let i = 0; i < loadedFile.data.length; i++) bin += String.fromCharCode(loadedFile.data[i]);
+          await chrome.storage.session.set({ pendingFile: { base64: btoa(bin), fileName: loadedFile.name, mimeType: loadedFile.type?.mime || 'application/pdf' } });
+          res = await chrome.runtime.sendMessage({ type: 'ATTACH_FROM_STORAGE' });
+        } else {
+          res = await chrome.runtime.sendMessage({ type: 'ATTACH_FILE', fileName: loadedFile.name, mimeType: loadedFile.type?.mime || 'application/pdf', fileData: arr });
+        }
+        if (!res?.success) setError('Feed failed. Try downloading instead.');
+      } catch {
+        setError('Feed failed. Try downloading instead.');
+      }
+    } else {
+      // Full file - load into segment flow
+      const virtualFile = new File([loadedFile.data], loadedFile.name, { type: loadedFile.type?.mime || 'application/pdf' });
+      setView(VIEWS.UPLOAD);
+      handleFile(virtualFile);
+    }
+  }, [platform, handleFile]);
 
   const handleDownloadAll = useCallback(() => {
     segments.forEach(seg => {
@@ -194,7 +373,7 @@ export default function App() {
   const handleEdit = useCallback(() => {
     feedAbortRef.current = true;
     setIsFeedingAll(false);
-    // Reset segment statuses but preserve ranges
+    // Reset segment statuses but preserve ranges and custom names
     setSegments(prev => prev.map(s => ({ ...s, status: 'pending', data: null, name: '' })));
     setStep(STEPS.RANGE);
   }, []);
@@ -217,6 +396,8 @@ export default function App() {
   };
   const allValid = segments.length > 0 && segments.every((s, i) => isSegmentValid(s, i));
   const totalCount = segments.reduce((sum, s) => sum + Math.max(0, s.to - s.from + 1), 0);
+
+  const storageReady = settings?.storageEnabled && settings?.supabaseUrl && settings?.supabaseKey && settings?.supabaseBucket;
 
   return (
     <div className="fd">
@@ -245,13 +426,54 @@ export default function App() {
         )}
       </div>
 
+      {/* View tabs - only show when storage is enabled */}
+      {storageReady && (
+        <div className="fd__tabs">
+          <button
+            className={`fd__tab${view === VIEWS.UPLOAD ? ' fd__tab--on' : ''}`}
+            onClick={() => setView(VIEWS.UPLOAD)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 16V4m0 0l-4 4m4-4l4 4" />
+              <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+            </svg>
+            Upload
+          </button>
+          <button
+            className={`fd__tab${view === VIEWS.LIBRARY ? ' fd__tab--on' : ''}`}
+            onClick={() => setView(VIEWS.LIBRARY)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            </svg>
+            Library
+          </button>
+        </div>
+      )}
+
       <div className="fd__body">
         {error && <div className="msg msg--err">{error}</div>}
-        {warnLarge && step >= STEPS.RANGE && step < STEPS.RESULT && (
-          <div className="msg msg--warn">Large file detected &mdash; slicing may take a moment.</div>
+
+        {/* Library view */}
+        {storageReady && view === VIEWS.LIBRARY && (
+          <Library
+            key={libKey}
+            supabaseUrl={settings.supabaseUrl}
+            supabaseKey={settings.supabaseKey}
+            supabaseBucket={settings.supabaseBucket}
+            platform={platform}
+            onLoadFile={handleLoadFromLibrary}
+          />
         )}
 
-        {step === STEPS.UPLOAD && <FileUploader onFile={handleFile} />}
+        {/* Upload flow - show when in upload view or storage not enabled */}
+        {(!storageReady || view === VIEWS.UPLOAD) && (
+          <>
+            {warnLarge && step >= STEPS.RANGE && step < STEPS.RESULT && (
+              <div className="msg msg--warn">Large file detected &mdash; slicing may take a moment.</div>
+            )}
+
+            {step === STEPS.UPLOAD && <FileUploader onFile={handleFile} />}
 
         {step >= STEPS.RANGE && fileInfo && (
           <div className="fc">
@@ -279,6 +501,7 @@ export default function App() {
             segments={segments}
             totalPages={fileInfo.totalPages}
             pageLabel={fileInfo.type.ext === 'pptx' ? 'Slide' : 'Page'}
+            fileName={fileInfo.name}
             onUpdate={handleUpdateSegment}
             onAdd={handleAddSegment}
             onRemove={handleRemoveSegment}
@@ -317,9 +540,35 @@ export default function App() {
             onDownloadAll={handleDownloadAll}
             onEdit={handleEdit}
             onReset={reset}
+            storageEnabled={storageReady}
+            onSaveOne={handleSaveOne}
           />
         )}
+          </>
+        )}
       </div>
+
+      {/* Settings button - bottom left */}
+      <button
+        className="fd__settings-btn"
+        onClick={() => setShowSettings(true)}
+        title="Settings"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
+        </svg>
+      </button>
+
+      {/* Settings panel overlay */}
+      {showSettings && (
+        <div className="fd__overlay">
+          <Settings
+            onClose={() => setShowSettings(false)}
+            onSettingsChange={(s) => { setSettings(s); setLibKey(k => k + 1); }}
+          />
+        </div>
+      )}
     </div>
   );
 }
