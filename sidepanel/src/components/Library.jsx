@@ -24,7 +24,7 @@ function fmtDate(ts) {
   return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export default function Library({ supabaseUrl, supabaseKey, supabaseBucket, platform, onLoadFile }) {
+export default function Library({ supabaseUrl, supabasePublishableKey, supabaseBucket, platform, onLoadFile }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
@@ -59,7 +59,7 @@ export default function Library({ supabaseUrl, supabaseKey, supabaseBucket, plat
 
   const handleDelete = async (file) => {
     setDeletingId(file.key);
-    await deleteFile(supabaseUrl, supabaseKey, supabaseBucket, file.key);
+    await deleteFile(supabaseUrl, supabasePublishableKey, supabaseBucket, file.key);
     await removeFile(file.key);
     setDeletingId(null);
     loadFiles();

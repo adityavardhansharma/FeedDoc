@@ -19,10 +19,14 @@ export default function Settings({ onClose, onSettingsChange }) {
   };
 
   const handleTest = async () => {
-    if (!settings.supabaseUrl || !settings.supabaseKey || !settings.supabaseBucket) return;
+    if (!settings.supabaseUrl || !settings.supabasePublishableKey || !settings.supabaseBucket) return;
     setTesting(true);
     setTestResult(null);
-    const ok = await testConnection(settings.supabaseUrl, settings.supabaseKey, settings.supabaseBucket);
+    const ok = await testConnection(
+      settings.supabaseUrl,
+      settings.supabasePublishableKey,
+      settings.supabaseBucket
+    );
     setTestResult(ok ? 'success' : 'error');
     setTesting(false);
   };
@@ -37,12 +41,15 @@ export default function Settings({ onClose, onSettingsChange }) {
 
   const handleClearConfig = () => {
     handleChange('supabaseUrl', '');
-    handleChange('supabaseKey', '');
+    handleChange('supabasePublishableKey', '');
     handleChange('supabaseBucket', '');
     handleChange('storageEnabled', false);
   };
 
-  const isConfigured = settings?.supabaseUrl && settings?.supabaseKey && settings?.supabaseBucket;
+  const publishableKey = settings?.supabasePublishableKey?.trim() || '';
+  const isSecretKey = publishableKey.startsWith('sb_secret_');
+  const isLegacyAnonKey = publishableKey.startsWith('eyJ');
+  const isConfigured = settings?.supabaseUrl && publishableKey && settings?.supabaseBucket;
 
   if (!settings) {
     return (
@@ -95,14 +102,14 @@ export default function Settings({ onClose, onSettingsChange }) {
             </div>
 
             <div className="stg__section">
-              <label className="stg__label">Anon Key</label>
+              <label className="stg__label">Publishable Key</label>
               <div className="stg__key-wrap">
                 <input
                   type={showKey ? 'text' : 'password'}
                   className="stg__input"
-                  value={settings.supabaseKey || ''}
-                  onChange={(e) => handleChange('supabaseKey', e.target.value)}
-                  placeholder="eyJhbGciOiJIUzI1NiIs..."
+                  value={settings.supabasePublishableKey || ''}
+                  onChange={(e) => handleChange('supabasePublishableKey', e.target.value)}
+                  placeholder="sb_publishable_..."
                   spellCheck={false}
                 />
                 <button className="stg__key-btn" onClick={() => setShowKey(!showKey)} title={showKey ? 'Hide' : 'Show'}>
@@ -119,6 +126,13 @@ export default function Settings({ onClose, onSettingsChange }) {
                   )}
                 </button>
               </div>
+              <p className="stg__hint">
+                {isSecretKey
+                  ? 'Use a publishable key here. Secret keys are server-only and will not work in a browser extension.'
+                  : isLegacyAnonKey
+                    ? 'Legacy anon keys still work, but Supabase now recommends publishable keys (`sb_publishable_...`).'
+                    : 'Use your Supabase publishable key (`sb_publishable_...`).'}
+              </p>
             </div>
 
             <div className="stg__section">
@@ -138,7 +152,7 @@ export default function Settings({ onClose, onSettingsChange }) {
               <button
                 className="stg__btn stg__btn--sm"
                 onClick={handleTest}
-                disabled={!isConfigured || testing}
+                disabled={!isConfigured || testing || isSecretKey}
               >
                 {testing ? <div className="sp" style={{ width: 10, height: 10, borderWidth: 1.5 }} /> : 'Test'}
               </button>

@@ -42,10 +42,10 @@ export default function App() {
     (async () => {
       const s = await getSettings();
       setSettings(s);
-      if (s.storageEnabled && s.supabaseUrl && s.supabaseKey && s.supabaseBucket) {
+      if (s.storageEnabled && s.supabaseUrl && s.supabasePublishableKey && s.supabaseBucket) {
         const expired = await clearExpiredFiles();
         if (expired.length > 0) {
-          await deleteFiles(s.supabaseUrl, s.supabaseKey, s.supabaseBucket, expired.map(f => f.key));
+          await deleteFiles(s.supabaseUrl, s.supabasePublishableKey, s.supabaseBucket, expired.map(f => f.key));
         }
       }
     })();
@@ -145,12 +145,12 @@ export default function App() {
 
       // Auto-save if enabled
       const canSave = settings?.storageEnabled && settings?.autoSave &&
-                      settings?.supabaseUrl && settings?.supabaseKey && settings?.supabaseBucket;
+                      settings?.supabaseUrl && settings?.supabasePublishableKey && settings?.supabaseBucket;
       if (canSave) {
         // Save segments
         for (const seg of updatedSegments) {
           if (seg.data) {
-            await uploadFile(settings.supabaseUrl, settings.supabaseKey, settings.supabaseBucket,
+            await uploadFile(settings.supabaseUrl, settings.supabasePublishableKey, settings.supabaseBucket,
                            seg.data, seg.name, fileInfo.type.mime).then(async (result) => {
               await addFile({
                 key: result.key,
@@ -171,7 +171,7 @@ export default function App() {
         // Save original if enabled
         if (settings.autoSaveOriginal) {
           const buf = await file.arrayBuffer();
-          await uploadFile(settings.supabaseUrl, settings.supabaseKey, settings.supabaseBucket,
+          await uploadFile(settings.supabaseUrl, settings.supabasePublishableKey, settings.supabaseBucket,
                          new Uint8Array(buf), file.name, fileInfo.type.mime).then(async (result) => {
             await addFile({
               key: result.key,
@@ -205,12 +205,12 @@ export default function App() {
 
   // Save segment to cloud storage
   const handleSaveOne = useCallback(async (seg) => {
-    if (!settings?.supabaseUrl || !settings?.supabaseKey || !settings?.supabaseBucket || !fileInfo) return false;
+    if (!settings?.supabaseUrl || !settings?.supabasePublishableKey || !settings?.supabaseBucket || !fileInfo) return false;
     try {
       const pageLabel = fileInfo.type.ext === 'pptx' ? 'slide' : 'page';
       const result = await uploadFile(
         settings.supabaseUrl,
-        settings.supabaseKey,
+        settings.supabasePublishableKey,
         settings.supabaseBucket,
         seg.data,
         seg.name,
@@ -239,12 +239,12 @@ export default function App() {
 
   // Save original file to cloud
   const handleSaveOriginal = useCallback(async () => {
-    if (!settings?.supabaseUrl || !settings?.supabaseKey || !settings?.supabaseBucket || !file || !fileInfo) return false;
+    if (!settings?.supabaseUrl || !settings?.supabasePublishableKey || !settings?.supabaseBucket || !file || !fileInfo) return false;
     try {
       const buf = await file.arrayBuffer();
       const result = await uploadFile(
         settings.supabaseUrl,
-        settings.supabaseKey,
+        settings.supabasePublishableKey,
         settings.supabaseBucket,
         new Uint8Array(buf),
         file.name,
@@ -397,7 +397,7 @@ export default function App() {
   const allValid = segments.length > 0 && segments.every((s, i) => isSegmentValid(s, i));
   const totalCount = segments.reduce((sum, s) => sum + Math.max(0, s.to - s.from + 1), 0);
 
-  const storageReady = settings?.storageEnabled && settings?.supabaseUrl && settings?.supabaseKey && settings?.supabaseBucket;
+  const storageReady = settings?.storageEnabled && settings?.supabaseUrl && settings?.supabasePublishableKey && settings?.supabaseBucket;
 
   return (
     <div className="fd">
@@ -459,7 +459,7 @@ export default function App() {
           <Library
             key={libKey}
             supabaseUrl={settings.supabaseUrl}
-            supabaseKey={settings.supabaseKey}
+            supabasePublishableKey={settings.supabasePublishableKey}
             supabaseBucket={settings.supabaseBucket}
             platform={platform}
             onLoadFile={handleLoadFromLibrary}

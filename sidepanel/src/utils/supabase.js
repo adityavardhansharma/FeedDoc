@@ -1,15 +1,15 @@
-// Supabase Storage wrapper for BYOAK (Bring Your Own API Key)
-// Direct client-side uploads without server
+// Supabase Storage wrapper for direct client-side uploads.
+// Prefer Supabase publishable keys; legacy anon JWT keys still work during migration.
 
 // Test connection to Supabase bucket
-export async function testConnection(url, anonKey, bucket) {
-  if (!url || !anonKey || !bucket) return false;
+export async function testConnection(url, clientKey, bucket) {
+  if (!url || !clientKey || !bucket) return false;
 
   try {
     const res = await fetch(`${url}/storage/v1/bucket/${bucket}`, {
       headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
+        'apikey': clientKey,
+        'Authorization': `Bearer ${clientKey}`,
       },
     });
     return res.ok;
@@ -28,15 +28,15 @@ function generateKey(fileName) {
 }
 
 // Upload a file to Supabase Storage
-export async function uploadFile(url, anonKey, bucket, fileData, fileName, mimeType) {
+export async function uploadFile(url, clientKey, bucket, fileData, fileName, mimeType) {
   const fileKey = generateKey(fileName);
 
   try {
     const res = await fetch(`${url}/storage/v1/object/${bucket}/${fileKey}`, {
       method: 'POST',
       headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
+        'apikey': clientKey,
+        'Authorization': `Bearer ${clientKey}`,
         'Content-Type': mimeType,
         'x-upsert': 'true',
       },
@@ -64,13 +64,13 @@ export async function uploadFile(url, anonKey, bucket, fileData, fileName, mimeT
 }
 
 // Delete a file from Supabase Storage
-export async function deleteFile(url, anonKey, bucket, fileKey) {
+export async function deleteFile(url, clientKey, bucket, fileKey) {
   try {
     const res = await fetch(`${url}/storage/v1/object/${bucket}/${fileKey}`, {
       method: 'DELETE',
       headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
+        'apikey': clientKey,
+        'Authorization': `Bearer ${clientKey}`,
       },
     });
     return res.ok;
@@ -80,12 +80,12 @@ export async function deleteFile(url, anonKey, bucket, fileKey) {
 }
 
 // Delete multiple files
-export async function deleteFiles(url, anonKey, bucket, fileKeys) {
+export async function deleteFiles(url, clientKey, bucket, fileKeys) {
   if (fileKeys.length === 0) return true;
 
   try {
     for (const fileKey of fileKeys) {
-      await deleteFile(url, anonKey, bucket, fileKey);
+      await deleteFile(url, clientKey, bucket, fileKey);
     }
     return true;
   } catch {

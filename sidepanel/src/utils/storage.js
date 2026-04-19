@@ -7,7 +7,7 @@ const FILES_KEY = 'feedoc_files';
 const DEFAULT_SETTINGS = {
   storageEnabled: false,
   supabaseUrl: '',
-  supabaseKey: '',
+  supabasePublishableKey: '',
   supabaseBucket: '',
   autoSave: false,
   autoSaveOriginal: false,
@@ -17,7 +17,15 @@ const DEFAULT_SETTINGS = {
 export async function getSettings() {
   try {
     const result = await chrome.storage.local.get(SETTINGS_KEY);
-    return { ...DEFAULT_SETTINGS, ...result[SETTINGS_KEY] };
+    const storedSettings = result[SETTINGS_KEY] || {};
+    const supabasePublishableKey =
+      storedSettings.supabasePublishableKey || storedSettings.supabaseKey || '';
+
+    return {
+      ...DEFAULT_SETTINGS,
+      ...storedSettings,
+      supabasePublishableKey,
+    };
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -25,7 +33,13 @@ export async function getSettings() {
 
 export async function saveSettings(settings) {
   try {
-    await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+    const normalizedSettings = {
+      ...settings,
+      supabasePublishableKey: settings.supabasePublishableKey || settings.supabaseKey || '',
+    };
+    delete normalizedSettings.supabaseKey;
+
+    await chrome.storage.local.set({ [SETTINGS_KEY]: normalizedSettings });
     return true;
   } catch {
     return false;
@@ -92,5 +106,5 @@ export async function clearExpiredFiles() {
     await saveFiles(remaining);
   }
 
-  return expired; // Return expired files so caller can delete from UploadThing
+  return expired;
 }
